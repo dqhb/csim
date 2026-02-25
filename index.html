@@ -1,0 +1,201 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>3D Parkour</title>
+    <style>
+        body { margin: 0; overflow: hidden; background-color: #000; font-family: sans-serif; }
+        canvas { display: block; }
+        #ui {
+            position: absolute;
+            top: 20px;
+            left: 20px;
+            color: white;
+            background: rgba(0, 0, 0, 0.5);
+            padding: 15px;
+            border-radius: 8px;
+            pointer-events: none; /* Let clicks pass through to the game */
+        }
+        #crosshair {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            width: 10px;
+            height: 10px;
+            background: rgba(255, 255, 255, 0.8);
+            border-radius: 50%;
+            transform: translate(-50%, -50%);
+            pointer-events: none;
+        }
+    </style>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+</head>
+<body>
+
+    <div id="ui">
+        <h2 style="margin: 0 0 10px 0; color: #38bdf8;">Neon Parkour</h2>
+        <p style="margin: 5px 0;"><b>WASD</b>: Move</p>
+        <p style="margin: 5px 0;"><b>Arrows</b>: Look Around</p>
+        <p style="margin: 5px 0;"><b>Space</b>: Jump</p>
+        <p style="margin: 15px 0 0 0; color: #fbbf24; font-size: 0.9em;">Don't fall into the void!</p>
+    </div>
+    
+    <div id="crosshair"></div>
+
+    <script>
+        // 1. Scene Setup
+        const scene = new THREE.Scene();
+        scene.background = new THREE.Color(0x0f172a); // Dark night sky
+        scene.fog = new THREE.Fog(0x0f172a, 10, 50); // Adds atmosphere and hides loading platforms
+
+        // 2. Camera Setup
+        const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+        camera.rotation.order = 'YXZ'; // Essential for First Person cameras (Yaw, Pitch, Roll)
+        
+        // 3. Renderer Setup
+        const renderer = new THREE.WebGLRenderer({ antialias: true });
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        document.body.appendChild(renderer.domElement);
+
+        // 4. Lighting
+        const ambientLight = new THREE.AmbientLight(0xffffff, 0.4);
+        scene.add(ambientLight);
+        const dirLight = new THREE.DirectionalLight(0x38bdf8, 0.8);
+        dirLight.position.set(10, 20, 10);
+        scene.add(dirLight);
+
+        // 5. Player Physics & State
+        const player = {
+            x: 0, y: 5, z: 0,
+            vy: 0, // Vertical velocity
+            height: 1.5, // How tall the player is
+            speed: 0.15, // Movement speed
+            jumpPower: 0.35, 
+            gravity: 0.015,
+            grounded: false
+        };
+
+        // 6. Platform Generation
+        const platforms = [];
+        
+        function createPlatform(x, y, z, width, depth, color) {
+            const geometry = new THREE.BoxGeometry(width, 1, depth);
+            const material = new THREE.MeshLambertMaterial({ color: color });
+            const mesh = new THREE.Mesh(geometry, material);
+            mesh.position.set(x, y, z);
+            scene.add(mesh);
+            platforms.push({ x, y, z, w: width, d: depth, h: 1 });
+        }
+
+        // Safe starting platform
+        createPlatform(0, 0, 0, 8, 8, 0x22c55e);
+
+        // Generate the parkour course
+        let currentZ = -6;
+        for (let i = 0; i < 30; i++) {
+            // Platforms get further apart and change heights as you progress
+            let gap = 4 + (Math.random() * 5); 
+            currentZ -= gap;
+            
+            let pX = (Math.random() - 0.5) * 12; // Strafe left/right
+            let pY = (Math.random() - 0.5) * 3;  // Vary height slightly
+            
+            // Make platforms smaller over time
+            let size = Math.max(2, 5 - (i * 0.1)); 
+            
+            createPlatform(pX, pY, currentZ, size, size, 0xf43f5e); // Red platforms
+        }
+
+        // 7. Input Handling
+        const keys = {};
+        window.addEventListener('keydown', e => keys[e.code] = true);
+        window.addEventListener('keyup', e => keys[e.code] = false);
+
+        // Handle window resizing
+        window.addEventListener('resize', () => {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        });
+
+        // 8. The Game Loop
+        function animate() {
+            requestAnimationFrame(animate);
+
+            // --- CAMERA ROTATION (Arrows) ---
+            if (keys['ArrowLeft']) camera.rotation.y += 0.04;
+            if (keys['ArrowRight']) camera.rotation.y -= 0.04;
+            if (keys['ArrowUp']) camera.rotation.x = Math.min(Math.PI / 2, camera.rotation.x + 0.04);
+            if (keys['ArrowDown']) camera.rotation.x = Math.max(-Math.PI / 2, camera.rotation.x - 0.04);
+
+            // --- MOVEMENT (WASD) ---
+            let moveX = 0, moveZ = 0;
+            if (keys['KeyW']) moveZ = -1;
+            if (keys['KeyS']) moveZ = 1;
+            if (keys['KeyA']) moveX = -1;
+            if (keys['KeyD']) moveX = 1;
+
+            // Calculate forward/right vectors based on where the camera is looking
+            if (moveX !== 0 || moveZ !== 0) {
+                // Find angle of movement
+                let angle = Math.atan2(moveX, moveZ) + camera.rotation.y;
+                player.x += Math.sin(angle) * player.speed;
+                player.z += Math.cos(angle) * player.speed;
+            }
+
+            // --- JUMPING & GRAVITY ---
+            if (keys['Space'] && player.grounded) {
+                player.vy = player.jumpPower;
+                player.grounded = false;
+            }
+            
+            player.vy -= player.gravity; // Apply gravity
+            let nextY = player.y + player.vy;
+
+            // --- COLLISION DETECTION ---
+            player.grounded = false;
+            
+            for (let p of platforms) {
+                // Define the edges of the platform
+                let minX = p.x - p.w / 2;
+                let maxX = p.x + p.w / 2;
+                let minZ = p.z - p.d / 2;
+                let maxZ = p.z + p.d / 2;
+                let topY = p.y + p.h / 2;
+
+                // Check if player is directly above the platform (X and Z bounds)
+                if (player.x > minX && player.x < maxX && player.z > minZ && player.z < maxZ) {
+                    
+                    // Check if player's feet just crossed the top of the platform while falling
+                    if (player.y - player.height >= topY && nextY - player.height <= topY && player.vy < 0) {
+                        nextY = topY + player.height; // Snap feet to top of platform
+                        player.vy = 0;
+                        player.grounded = true;
+                    }
+                }
+            }
+
+            player.y = nextY;
+
+            // --- DEATH / RESPAWN ---
+            if (player.y < -20) {
+                player.x = 0; 
+                player.y = 5; 
+                player.z = 0; 
+                player.vy = 0;
+                camera.rotation.set(0, 0, 0); // Reset look direction
+            }
+
+            // Update camera position to match player physics
+            camera.position.set(player.x, player.y, player.z);
+
+            // Render scene
+            renderer.render(scene, camera);
+        }
+
+        // Start the game
+        animate();
+    </script>
+</body>
+</html>
