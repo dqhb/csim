@@ -3,315 +3,290 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>csim</title>
+    <title>Infinite Parkour</title>
     <style>
-        body { margin: 0; overflow: hidden; background-color: #87CEEB; font-family: 'Segoe UI', sans-serif; }
+        body { margin: 0; overflow: hidden; background-color: #1e1e2f; font-family: 'Segoe UI', sans-serif; }
         canvas { display: block; }
         #ui {
             position: absolute; top: 20px; left: 20px; color: white;
             background: rgba(0, 0, 0, 0.7); padding: 15px; border-radius: 8px;
-            pointer-events: none; border: 1px solid #555; text-shadow: 1px 1px 2px black;
+            pointer-events: none; border: 1px solid #555;
         }
-        #hud {
-            position: absolute; bottom: 30px; right: 30px; color: #10b981;
-            background: rgba(0, 0, 0, 0.8); padding: 15px 25px; border-radius: 8px;
-            font-size: 1.5rem; font-family: monospace; text-align: right; border: 2px solid #555;
+        #center-dot {
+            position: absolute; top: 50%; left: 50%; width: 6px; height: 6px;
+            background: white; border-radius: 50%; transform: translate(-50%, -50%);
+            pointer-events: none;
         }
-        .hud-line { margin: 5px 0; }
-        .warning { color: #ef4444; font-weight: bold; animation: blink 0.5s infinite; display: none; }
-        .info { color: #fcd34d; font-size: 1rem; }
-        @keyframes blink { 0% { opacity: 1; } 50% { opacity: 0; } 100% { opacity: 1; } }
+        #checkpoint-msg {
+            position: absolute; top: 20%; left: 50%; transform: translateX(-50%);
+            color: #10b981; font-size: 2rem; font-weight: bold; font-family: monospace;
+            text-shadow: 2px 2px 0 #000; display: none; pointer-events: none;
+        }
+        .highlight { color: #facc15; font-weight: bold; }
     </style>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
 </head>
 <body>
 
     <div id="ui">
-        <h2 style="margin: 0 0 10px 0; color: #38bdf8;">City Cruiser</h2>
-        <p><b>W / S</b> : Gas / Brake</p>
-        <p><b>A / D</b> : Steer</p>
+        <h2 style="margin: 0 0 10px 0; color: #38bdf8;">Parkour Run</h2>
+        <p><span class="highlight">W A S D</span> : Move / Strafe</p>
+        <p><span class="highlight">SPACE</span> : Jump</p>
+        <p><span class="highlight">ARROW KEYS</span> : Look Around</p>
         <hr style="border-color: #555;">
-        <p class="info">RULES OF THE ROAD:</p>
-        <p>- Limit: 45 mph</p>
-        <p>- Stop at Red Lights</p>
-        <p>- Don't fall in the river!</p>
+        <p>Green platforms = <span class="highlight">Checkpoints</span></p>
     </div>
 
-    <div id="hud">
-        <div id="ruleWarning" class="warning">VIOLATION</div>
-        <div class="hud-line" id="speedometer">Speed: 0 mph</div>
-        <div class="hud-line info">Limit: 45 mph</div>
-    </div>
+    <div id="center-dot"></div>
+    <div id="checkpoint-msg">CHECKPOINT REACHED!</div>
 
     <script>
-        // --- 1. SETUP (Daytime) ---
+        // --- 1. SETUP ---
         const scene = new THREE.Scene();
-        scene.background = new THREE.Color(0x87CEEB); // Sky Blue
-        scene.fog = new THREE.FogExp2(0x87CEEB, 0.002); // Distance Fog
+        scene.background = new THREE.Color(0x1e1e2f);
+        scene.fog = new THREE.Fog(0x1e1e2f, 10, 50);
 
-        const camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 2000);
+        const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
         const renderer = new THREE.WebGLRenderer({ antialias: true });
         renderer.setSize(window.innerWidth, window.innerHeight);
-        renderer.shadowMap.enabled = true;
         document.body.appendChild(renderer.domElement);
 
-        // Bright sunlight
         const ambientLight = new THREE.AmbientLight(0xffffff, 0.6);
         scene.add(ambientLight);
-        const sunLight = new THREE.DirectionalLight(0xffffff, 0.8);
-        sunLight.position.set(200, 500, 300);
-        sunLight.castShadow = true;
-        sunLight.shadow.camera.left = -500; sunLight.shadow.camera.right = 500;
-        sunLight.shadow.camera.top = 500; sunLight.shadow.camera.bottom = -500;
-        scene.add(sunLight);
+        const dirLight = new THREE.DirectionalLight(0xffffff, 0.6);
+        dirLight.position.set(10, 20, 10);
+        scene.add(dirLight);
 
-        // --- 2. MATERIALS ---
-        const buildingMat = new THREE.MeshLambertMaterial({ color: 0xe2e8f0 }); // Light gray concrete
-        const roadMat = new THREE.MeshLambertMaterial({ color: 0x475569 }); // Asphalt
-        const grassMat = new THREE.MeshLambertMaterial({ color: 0x86efac }); // Grass
-        const waterMat = new THREE.MeshPhongMaterial({ color: 0x3b82f6, transparent: true, opacity: 0.8, shininess: 100 });
-        
-        // Traffic Light Materials
-        const lightOff = new THREE.MeshBasicMaterial({ color: 0x333333 });
-        const lightRed = new THREE.MeshBasicMaterial({ color: 0xff0000 });
-        const lightYellow = new THREE.MeshBasicMaterial({ color: 0xfacc15 });
-        const lightGreen = new THREE.MeshBasicMaterial({ color: 0x22c55e });
+        // --- 2. PLAYER & PHYSICS STATE ---
+        const player = {
+            pos: new THREE.Vector3(0, 5, 0),
+            vel: new THREE.Vector3(0, 0, 0),
+            size: new THREE.Vector3(0.8, 1.8, 0.8), // Player Hitbox (Width, Height, Depth)
+            isGrounded: false,
+            yaw: 0,   // Left/Right rotation
+            pitch: 0  // Up/Down rotation
+        };
 
-        // --- 3. ENVIRONMENT & GRID ---
-        const roadWidth = 30;
-        const blockSize = 120;
-        const citySize = 12; // Radius in blocks
-        const mapLimit = citySize * blockSize;
+        const physics = {
+            gravity: 0.012,
+            jumpPower: 0.28,
+            speed: 0.12,
+            friction: 0.8,
+            airControl: 0.6
+        };
 
-        // Ground base
-        const ground = new THREE.Mesh(new THREE.PlaneGeometry(mapLimit*2.5, mapLimit*2.5), grassMat);
-        ground.rotation.x = -Math.PI / 2; ground.receiveShadow = true;
-        scene.add(ground);
+        let currentCheckpoint = new THREE.Vector3(0, 5, 0);
 
-        // Giant River in the middle (Z roughly 0)
-        const river = new THREE.Mesh(new THREE.PlaneGeometry(mapLimit*2.5, 80), waterMat);
-        river.rotation.x = -Math.PI / 2; river.position.set(0, 0.2, 0);
-        scene.add(river);
-
-        const buildings = [];
-        const trafficLights = [];
-
-        // Build City
-        for (let x = -citySize; x <= citySize; x++) {
-            for (let z = -citySize; z <= citySize; z++) {
-                let posX = x * blockSize;
-                let posZ = z * blockSize;
-
-                // Horizontal Roads (Bridges if over river)
-                let isBridge = (z === 0);
-                let hRoad = new THREE.Mesh(new THREE.PlaneGeometry(blockSize, roadWidth), roadMat);
-                hRoad.rotation.x = -Math.PI / 2; 
-                hRoad.position.set(posX, isBridge ? 0.5 : 0.1, posZ); 
-                hRoad.receiveShadow = true;
-                scene.add(hRoad);
-
-                // Vertical Roads
-                let vRoad = new THREE.Mesh(new THREE.PlaneGeometry(roadWidth, blockSize), roadMat);
-                vRoad.rotation.x = -Math.PI / 2; vRoad.position.set(posX, 0.1, posZ); vRoad.receiveShadow = true;
-                scene.add(vRoad);
-
-                // Add Traffic Lights at Intersections
-                if (x !== -citySize && z !== -citySize) {
-                    createIntersectionPole(posX + 20, posZ + 20);
-                }
-
-                // Buildings (Skip river area)
-                if (x !== 0 && z !== 0 && !isBridge) {
-                    for(let b = 0; b < 2; b++) {
-                        let w = 30 + Math.random() * 20, d = 30 + Math.random() * 20, h = 40 + Math.random() * 120;
-                        let bX = posX + (b%2 === 0 ? 30 : -30);
-                        let bZ = posZ + (b < 2 ? 30 : -30);
-                        const building = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), buildingMat);
-                        building.position.set(bX, h/2, bZ);
-                        building.castShadow = true; building.receiveShadow = true;
-                        scene.add(building);
-                        buildings.push(building);
-                    }
-                }
-            }
-        }
-
-        // Helper to draw traffic lights
-        function createIntersectionPole(x, z) {
-            const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.5, 0.5, 15), new THREE.MeshLambertMaterial({color: 0x222222}));
-            pole.position.set(x, 7.5, z);
-            scene.add(pole);
-            
-            const box = new THREE.Mesh(new THREE.BoxGeometry(2, 6, 2), new THREE.MeshLambertMaterial({color: 0x111111}));
-            box.position.set(x, 15, z);
-            scene.add(box);
-
-            // Light indicator meshes
-            const nsLight = new THREE.Mesh(new THREE.PlaneGeometry(1.5, 4), lightGreen);
-            nsLight.position.set(x, 15, z + 1.05); // Facing North/South roads
-            scene.add(nsLight);
-            
-            const ewLight = new THREE.Mesh(new THREE.PlaneGeometry(1.5, 4), lightRed);
-            ewLight.position.set(x + 1.05, 15, z); // Facing East/West roads
-            ewLight.rotation.y = Math.PI / 2;
-            scene.add(ewLight);
-
-            trafficLights.push({ ns: nsLight, ew: ewLight, x: x, z: z });
-        }
-
-        // --- 4. PLAYER CAR ---
-        function createCar(colorHex) {
-            const carGroup = new THREE.Group();
-            const chassis = new THREE.Mesh(new THREE.BoxGeometry(4, 1.2, 9), new THREE.MeshPhongMaterial({ color: colorHex }));
-            chassis.position.y = 1; chassis.castShadow = true;
-            const cabin = new THREE.Mesh(new THREE.BoxGeometry(3.6, 1.5, 5), new THREE.MeshPhongMaterial({ color: 0x111111 }));
-            cabin.position.set(0, 2.3, -0.5); cabin.castShadow = true;
-            carGroup.add(chassis, cabin);
-            return carGroup;
-        }
-
-        const playerCar = createCar(0xef4444); // Red player car
-        playerCar.position.set(10, 0, 120); 
-        scene.add(playerCar);
-
-        // --- 5. TRAFFIC SYSTEM ---
-        const trafficCars = [];
-        const colors = [0x3b82f6, 0x10b981, 0xf59e0b, 0xffffff, 0x333333];
-        for(let i=0; i<40; i++) {
-            let tCar = createCar(colors[Math.floor(Math.random() * colors.length)]);
-            let isHorizontal = Math.random() > 0.5;
-            let laneOffset = Math.random() > 0.5 ? 7 : -7; 
-            
-            if(isHorizontal) {
-                tCar.position.set((Math.random() - 0.5) * mapLimit*2, 0, Math.floor((Math.random() - 0.5) * citySize) * blockSize + laneOffset);
-                tCar.rotation.y = laneOffset > 0 ? -Math.PI/2 : Math.PI/2;
-            } else {
-                tCar.position.set(Math.floor((Math.random() - 0.5) * citySize) * blockSize + laneOffset, 0, (Math.random() - 0.5) * mapLimit*2);
-                tCar.rotation.y = laneOffset > 0 ? 0 : Math.PI;
-            }
-            tCar.userData = { speed: 0.4 + Math.random() * 0.3 };
-            scene.add(tCar);
-            trafficCars.push(tCar);
-        }
-
-        // --- 6. PHYSICS & RULES STATE ---
-        let speed = 0;
-        let warningTimer = 0;
-        let lightState = 0; // 0: NS Green, 1: NS Yellow, 2: EW Green, 3: EW Yellow
-
-        function showWarning(text) {
-            const w = document.getElementById('ruleWarning');
-            w.innerText = text;
-            w.style.display = 'block';
-            warningTimer = 60; 
-        }
-
-        // --- 7. INPUTS ---
+        // --- 3. INPUT HANDLING ---
         const keys = {};
-        window.addEventListener('keydown', e => keys[e.code] = true);
+        window.addEventListener('keydown', e => { 
+            keys[e.code] = true; 
+            if (e.code === 'Space' && player.isGrounded) {
+                player.vel.y = physics.jumpPower;
+                player.isGrounded = false;
+            }
+        });
         window.addEventListener('keyup', e => keys[e.code] = false);
 
-        // --- 8. MAIN LOOP ---
-        const carBox = new THREE.Box3();
-        const obstacleBox = new THREE.Box3();
+        // --- 4. INFINITE LEVEL GENERATOR ---
+        const platforms = []; // Stores meshes
+        const hitboxes = [];  // Stores Box3s for collision
+        let platformIndex = 0;
+        let lastPos = new THREE.Vector3(0, 0, 0);
 
+        const blockGeo = new THREE.BoxGeometry(1, 1, 1);
+        const cpMat = new THREE.MeshLambertMaterial({ color: 0x10b981 }); // Checkpoint green
+
+        function createBlock(x, y, z, w, h, d, material, isCheckpoint = false) {
+            const mesh = new THREE.Mesh(blockGeo, material);
+            mesh.scale.set(w, h, d);
+            mesh.position.set(x, y, z);
+            scene.add(mesh);
+            platforms.push(mesh);
+
+            const box = new THREE.Box3().setFromObject(mesh);
+            hitboxes.push(box);
+
+            if (isCheckpoint) {
+                mesh.userData.isCheckpoint = true;
+                mesh.userData.cpPos = new THREE.Vector3(x, y + h/2 + 2, z);
+            }
+        }
+
+        function generateNextPlatform() {
+            platformIndex++;
+            
+            // Randomize distance and height
+            let gapZ = 3.5 + Math.random() * 2.5; // Forward gap
+            let gapX = (Math.random() - 0.5) * 4; // Left/Right shift
+            let gapY = (Math.random() - 0.5) * 3; // Up/Down shift
+
+            // Cap the downward and upward shifts so it's jumpable
+            if (gapY > 1.5) gapY = 1.5; 
+            if (gapY < -2) gapY = -2;
+
+            lastPos.x += gapX;
+            lastPos.y += gapY;
+            lastPos.z -= gapZ; // Move forward into negative Z
+
+            let typeRoll = Math.random();
+            let isCp = (platformIndex % 10 === 0); // Checkpoint every 10 jumps
+            
+            let color = new THREE.Color().setHSL(Math.random(), 0.8, 0.5);
+            let mat = isCp ? cpMat : new THREE.MeshLambertMaterial({ color: color });
+
+            let platW = isCp ? 4 : 2 + Math.random() * 1.5;
+            let platD = isCp ? 4 : 2 + Math.random() * 1.5;
+
+            // Base platform
+            createBlock(lastPos.x, lastPos.y, lastPos.z, platW, 0.5, platD, mat, isCp);
+
+            if (!isCp) {
+                if (typeRoll < 0.2) {
+                    // HEADHITTER: Add a ceiling block exactly 2.1 units above the platform
+                    createBlock(lastPos.x, lastPos.y + 2.4, lastPos.z, platW, 0.5, platD, mat);
+                } else if (typeRoll < 0.4) {
+                    // NEO: Add a wall in the middle, pushing the player to jump around it
+                    createBlock(lastPos.x, lastPos.y + 2, lastPos.z + platD/2 + 0.5, 3, 4, 0.5, mat);
+                }
+            }
+        }
+
+        // Generate initial starting area
+        createBlock(0, 0, 0, 5, 0.5, 5, cpMat, true);
+        for(let i=0; i<15; i++) generateNextPlatform();
+
+        function showCheckpointUI() {
+            const msg = document.getElementById('checkpoint-msg');
+            msg.style.display = 'block';
+            setTimeout(() => { msg.style.display = 'none'; }, 1500);
+        }
+
+        // --- 5. CUSTOM HITBOX COLLISION SYSTEM ---
+        const playerBox = new THREE.Box3();
+        
+        function updatePlayerHitbox(offsetX = 0, offsetY = 0, offsetZ = 0) {
+            playerBox.min.set(player.pos.x - player.size.x/2 + offsetX, player.pos.y + offsetY, player.pos.z - player.size.z/2 + offsetZ);
+            playerBox.max.set(player.pos.x + player.size.x/2 + offsetX, player.pos.y + player.size.y + offsetY, player.pos.z + player.size.z/2 + offsetZ);
+        }
+
+        function checkCollisions() {
+            for (let i = 0; i < hitboxes.length; i++) {
+                if (playerBox.intersectsBox(hitboxes[i])) {
+                    // Check if it's a checkpoint platform
+                    if (platforms[i].userData.isCheckpoint) {
+                        if (currentCheckpoint.distanceTo(platforms[i].userData.cpPos) > 1) {
+                            currentCheckpoint.copy(platforms[i].userData.cpPos);
+                            showCheckpointUI();
+                        }
+                    }
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        function die() {
+            player.pos.copy(currentCheckpoint);
+            player.vel.set(0,0,0);
+            player.yaw = 0;
+            player.pitch = 0;
+        }
+
+        // --- 6. MAIN LOOP ---
         function animate() {
             requestAnimationFrame(animate);
-            let time = Date.now();
 
-            // --- TRAFFIC LIGHT LOGIC (10 sec cycle) ---
-            let cycle = time % 10000;
-            let isNSGreen = false, isEWGreen = false;
+            // CAMERA CONTROLS (Arrow Keys)
+            if (keys['ArrowLeft']) player.yaw += 0.04;
+            if (keys['ArrowRight']) player.yaw -= 0.04;
+            if (keys['ArrowUp']) player.pitch += 0.04;
+            if (keys['ArrowDown']) player.pitch -= 0.04;
+            
+            // Clamp pitch to look straight up/down
+            player.pitch = Math.max(-Math.PI/2.1, Math.min(Math.PI/2.1, player.pitch));
 
-            if (cycle < 4000) { lightState = 0; isNSGreen = true; } // NS Green, EW Red
-            else if (cycle < 5000) { lightState = 1; }              // NS Yellow, EW Red
-            else if (cycle < 9000) { lightState = 2; isEWGreen = true; } // NS Red, EW Green
-            else { lightState = 3; }                                // NS Red, EW Yellow
+            // MOVEMENT INTENT (WASD mapped to Yaw direction)
+            let moveX = 0; let moveZ = 0;
+            if (keys['KeyW']) moveZ -= 1;
+            if (keys['KeyS']) moveZ += 1;
+            if (keys['KeyA']) moveX -= 1;
+            if (keys['KeyD']) moveX += 1;
 
-            trafficLights.forEach(tl => {
-                if(lightState === 0) { tl.ns.material = lightGreen; tl.ew.material = lightRed; }
-                if(lightState === 1) { tl.ns.material = lightYellow; tl.ew.material = lightRed; }
-                if(lightState === 2) { tl.ns.material = lightRed; tl.ew.material = lightGreen; }
-                if(lightState === 3) { tl.ns.material = lightRed; tl.ew.material = lightYellow; }
-            });
-
-            // --- DRIVING PHYSICS ---
-            if (keys['KeyW']) speed += 0.015;
-            if (keys['KeyS']) speed -= 0.03; 
-            if (!keys['KeyW'] && !keys['KeyS']) speed *= 0.98; 
-            speed = Math.max(-0.4, Math.min(1.5, speed)); 
-
-            if (Math.abs(speed) > 0.05) {
-                let turn = 0.04 * (speed > 0 ? 1 : -1);
-                if (keys['KeyA']) playerCar.rotation.y += turn;  
-                if (keys['KeyD']) playerCar.rotation.y -= turn; 
+            // Normalize diagonal movement
+            if (moveX !== 0 || moveZ !== 0) {
+                let length = Math.sqrt(moveX*moveX + moveZ*moveZ);
+                moveX /= length; moveZ /= length;
             }
 
-            playerCar.position.x -= Math.sin(playerCar.rotation.y) * speed;
-            playerCar.position.z -= Math.cos(playerCar.rotation.y) * speed;
+            // Apply camera rotation to movement vector
+            let sinY = Math.sin(player.yaw);
+            let cosY = Math.cos(player.yaw);
+            
+            let targetVx = (moveX * cosY + moveZ * sinY) * physics.speed;
+            let targetVz = (-moveX * sinY + moveZ * cosY) * physics.speed;
 
-            // --- THE INFINITE LOOP TRICK ---
-            if (playerCar.position.x > mapLimit) playerCar.position.x = -mapLimit + 10;
-            if (playerCar.position.x < -mapLimit) playerCar.position.x = mapLimit - 10;
-            if (playerCar.position.z > mapLimit) playerCar.position.z = -mapLimit + 10;
-            if (playerCar.position.z < -mapLimit) playerCar.position.z = mapLimit - 10;
+            // Apply friction/acceleration
+            let control = player.isGrounded ? 1 : physics.airControl;
+            player.vel.x += (targetVx - player.vel.x) * 0.2 * control;
+            player.vel.z += (targetVz - player.vel.z) * 0.2 * control;
 
-            trafficCars.forEach(car => {
-                car.position.x -= Math.sin(car.rotation.y) * car.userData.speed;
-                car.position.z -= Math.cos(car.rotation.y) * car.userData.speed;
-                if(car.position.x > mapLimit) car.position.x = -mapLimit;
-                if(car.position.x < -mapLimit) car.position.x = mapLimit;
-                if(car.position.z > mapLimit) car.position.z = -mapLimit;
-                if(car.position.z < -mapLimit) car.position.z = mapLimit;
-            });
+            // Apply Gravity
+            player.vel.y -= physics.gravity;
 
-            // --- RULES ENGINE ---
-            let mph = Math.floor(Math.abs(speed) * 60);
-            if (mph > 45) showWarning("SPEEDING!");
+            // --- AXIS-BY-AXIS COLLISION RESOLUTION ---
+            player.isGrounded = false;
 
-            // Intersection Red Light Check
-            let inIntersection = (Math.abs(playerCar.position.x % blockSize) < roadWidth/2) && (Math.abs(playerCar.position.z % blockSize) < roadWidth/2);
-            if (inIntersection && speed > 0.2) {
-                // Determine direction car is facing
-                let facingNS = Math.abs(Math.cos(playerCar.rotation.y)) > 0.7; // Facing largely North/South
-                let facingEW = Math.abs(Math.sin(playerCar.rotation.y)) > 0.7; // Facing largely East/West
-                
-                if (facingNS && !isNSGreen && lightState !== 1) showWarning("RAN RED LIGHT!");
-                if (facingEW && !isEWGreen && lightState !== 3) showWarning("RAN RED LIGHT!");
-            }
-
-            // Water / River Check
-            if (Math.abs(playerCar.position.z) < 38 && Math.abs(playerCar.position.x % blockSize) > roadWidth/2) {
-                showWarning("IN THE RIVER!");
-                speed *= 0.8; // Water slows you down
-                playerCar.position.y = -1; // Sink
+            // Move X
+            updatePlayerHitbox(player.vel.x, 0, 0);
+            if (checkCollisions()) {
+                player.vel.x = 0; // Hit a wall, stop X velocity
             } else {
-                playerCar.position.y = 0; // Normal road
+                player.pos.x += player.vel.x;
             }
 
-            // Collisions
-            carBox.setFromObject(playerCar);
-            for (let b of buildings) {
-                obstacleBox.setFromObject(b);
-                if (carBox.intersectsBox(obstacleBox)) { showWarning("CRASH!"); speed = -speed * 0.5; }
-            }
-            for (let t of trafficCars) {
-                obstacleBox.setFromObject(t);
-                if (carBox.intersectsBox(obstacleBox)) { showWarning("ACCIDENT!"); speed = -speed * 0.5; }
+            // Move Y
+            updatePlayerHitbox(0, player.vel.y, 0);
+            if (checkCollisions()) {
+                if (player.vel.y < 0) {
+                    player.isGrounded = true; // Landed on floor
+                }
+                player.vel.y = 0; // Hit floor or headhitter ceiling, stop Y velocity
+            } else {
+                player.pos.y += player.vel.y;
             }
 
-            // UI
-            if(warningTimer > 0) warningTimer--; else document.getElementById('ruleWarning').style.display = 'none';
-            document.getElementById('speedometer').innerText = `Speed: ${mph} mph`;
+            // Move Z
+            updatePlayerHitbox(0, 0, player.vel.z);
+            if (checkCollisions()) {
+                player.vel.z = 0; // Hit a wall, stop Z velocity
+            } else {
+                player.pos.z += player.vel.z;
+            }
 
-            // Camera follow
-            const camOffset = new THREE.Vector3(0, 5, 12).applyMatrix4(playerCar.matrixWorld);
-            camera.position.lerp(camOffset, 0.2); 
-            camera.lookAt(new THREE.Vector3(0, 0, -10).applyMatrix4(playerCar.matrixWorld));
+            // Update Camera Position & Rotation
+            camera.position.set(player.pos.x, player.pos.y + player.size.y - 0.2, player.pos.z);
+            camera.rotation.set(player.pitch, player.yaw, 0, 'YXZ');
+
+            // --- DEATH & WORLD GENERATION ---
+            // Fall into the void
+            if (player.pos.y < -15) die();
+
+            // Infinite world generation (if player gets close to the end of the loaded array)
+            if (player.pos.z < platforms[platforms.length - 5].position.z) {
+                for(let i=0; i<5; i++) generateNextPlatform();
+                
+                // Cleanup old platforms behind us to save memory
+                while(platforms.length > 30) {
+                    let oldMesh = platforms.shift();
+                    scene.remove(oldMesh);
+                    hitboxes.shift();
+                }
+            }
 
             renderer.render(scene, camera);
         }
-        
+
         animate();
     </script>
 </body>
