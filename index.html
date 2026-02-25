@@ -3,245 +3,249 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>3D Flight Simulator</title>
+    <title>fsim</title>
     <style>
         body { margin: 0; overflow: hidden; background-color: #87CEEB; font-family: 'Segoe UI', sans-serif; }
         canvas { display: block; }
         #ui {
-            position: absolute;
-            top: 20px;
-            left: 20px;
-            color: white;
-            background: rgba(0, 0, 0, 0.6);
-            padding: 15px;
-            border-radius: 8px;
-            pointer-events: none;
-            text-shadow: 1px 1px 2px black;
+            position: absolute; top: 20px; left: 20px; color: white;
+            background: rgba(0, 0, 0, 0.7); padding: 15px; border-radius: 8px;
+            pointer-events: none; text-shadow: 1px 1px 2px black;
         }
-        #speedometer {
-            position: absolute;
-            bottom: 30px;
-            right: 30px;
-            color: #10b981;
-            background: rgba(0, 0, 0, 0.7);
-            padding: 15px 25px;
-            border-radius: 8px;
-            font-size: 1.5rem;
-            font-weight: bold;
-            font-family: monospace;
+        #hud {
+            position: absolute; bottom: 30px; right: 30px; color: #10b981;
+            background: rgba(0, 0, 0, 0.8); padding: 15px 25px; border-radius: 8px;
+            font-size: 1.2rem; font-family: monospace; text-align: right;
         }
-        .key { color: #fbbf24; font-weight: bold; }
+        .warning { color: #ef4444; font-weight: bold; animation: blink 1s infinite; display: none; }
+        @keyframes blink { 0% { opacity: 1; } 50% { opacity: 0; } 100% { opacity: 1; } }
     </style>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
 </head>
 <body>
 
     <div id="ui">
-        <h2 style="margin: 0 0 10px 0; color: #38bdf8;">Flight Sim</h2>
-        <p style="margin: 5px 0;"><span class="key">W / S</span> : Pitch (Nose Up/Down)</p>
-        <p style="margin: 5px 0;"><span class="key">A / D</span> : Yaw (Turn Left/Right)</p>
-        <p style="margin: 5px 0;"><span class="key">Q / E</span> : Roll (Tilt Left/Right)</p>
-        <p style="margin: 5px 0;"><span class="key">↑ / ↓</span> : Throttle (Speed)</p>
-        <p style="margin: 15px 0 0 0; color: #ef4444; font-size: 0.9em;">Avoid the buildings and the ground!</p>
+        <h2 style="margin: 0 0 10px 0; color: #38bdf8;">Pro Flight Sim</h2>
+        <p><b>W / S</b> : Pitch | <b>A / D</b> : Yaw | <b>Q / E</b> : Roll</p>
+        <p><b>↑ / ↓</b> : Throttle</p>
+        <p style="color: #fbbf24; font-size: 0.9em;">Physics Active: Watch your lift!</p>
     </div>
 
-    <div id="speedometer">Speed: 0 kts</div>
+    <div id="hud">
+        <div id="stallWarning" class="warning">STALL WARNING</div>
+        <div id="speedometer">Speed: 0 kts</div>
+        <div id="altimeter">Alt: 0 ft</div>
+    </div>
 
     <script>
-        // 1. Scene & Camera Setup
+        // --- 1. SETUP ---
         const scene = new THREE.Scene();
-        scene.background = new THREE.Color(0x87CEEB); // Sky blue
-        scene.fog = new THREE.FogExp2(0x87CEEB, 0.002); // Distance fog
+        scene.background = new THREE.Color(0x60a5fa);
+        scene.fog = new THREE.FogExp2(0x60a5fa, 0.0015);
 
-        const camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 2000);
-        
+        const camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 5000);
         const renderer = new THREE.WebGLRenderer({ antialias: true });
         renderer.setSize(window.innerWidth, window.innerHeight);
         renderer.shadowMap.enabled = true;
         document.body.appendChild(renderer.domElement);
 
-        // 2. Lighting
-        const ambientLight = new THREE.AmbientLight(0xffffff, 0.6);
+        const ambientLight = new THREE.AmbientLight(0xffffff, 0.5);
         scene.add(ambientLight);
         const sunLight = new THREE.DirectionalLight(0xffffff, 0.8);
-        sunLight.position.set(100, 200, 50);
+        sunLight.position.set(500, 1000, 500);
         sunLight.castShadow = true;
         scene.add(sunLight);
 
-        // 3. Environment (Ground & Runway)
-        const groundGeo = new THREE.PlaneGeometry(4000, 4000);
-        const groundMat = new THREE.MeshLambertMaterial({ color: 0x4ade80 }); // Grass green
-        const ground = new THREE.Mesh(groundGeo, groundMat);
+        // --- 2. PROCEDURAL TEXTURES (The "Detail" Hack) ---
+        function createBuildingTexture() {
+            const canvas = document.createElement('canvas');
+            canvas.width = 128; canvas.height = 256;
+            const ctx = canvas.getContext('2d');
+            ctx.fillStyle = '#1e293b'; ctx.fillRect(0, 0, 128, 256); // Base color
+            ctx.fillStyle = '#fef08a'; // Window light color
+            for(let y = 10; y < 256; y += 15) {
+                for(let x = 10; x < 128; x += 15) {
+                    if(Math.random() > 0.3) ctx.fillRect(x, y, 8, 10); // Draw windows
+                }
+            }
+            const tex = new THREE.CanvasTexture(canvas);
+            tex.wrapS = THREE.RepeatWrapping; tex.wrapT = THREE.RepeatWrapping;
+            return tex;
+        }
+        const buildingMat = new THREE.MeshLambertMaterial({ map: createBuildingTexture() });
+
+        // --- 3. ENVIRONMENT & CITY ---
+        const ground = new THREE.Mesh(
+            new THREE.PlaneGeometry(10000, 10000), 
+            new THREE.MeshLambertMaterial({ color: 0x22c55e })
+        );
         ground.rotation.x = -Math.PI / 2;
         ground.receiveShadow = true;
         scene.add(ground);
 
-        const runwayGeo = new THREE.PlaneGeometry(40, 600);
-        const runwayMat = new THREE.MeshLambertMaterial({ color: 0x333333 }); // Dark asphalt
-        const runway = new THREE.Mesh(runwayGeo, runwayMat);
-        runway.rotation.x = -Math.PI / 2;
-        runway.position.set(0, 0.1, -200); // Slightly above ground to prevent Z-fighting
-        scene.add(runway);
+        // Runways (Airport 1 and Airport 2)
+        function createRunway(x, z, rotationY) {
+            const rw = new THREE.Mesh(new THREE.PlaneGeometry(60, 1000), new THREE.MeshLambertMaterial({ color: 0x334155 }));
+            rw.rotation.x = -Math.PI / 2; rw.rotation.y = rotationY; rw.position.set(x, 0.5, z);
+            scene.add(rw);
+        }
+        createRunway(0, -400, 0);       // Starting Airport
+        createRunway(3000, -2000, 1.5); // Distant Airport
 
-        // 4. Buildings (Obstacles)
-        const buildings = [];
-        const buildingMaterial = new THREE.MeshLambertMaterial({ color: 0x94a3b8 });
-        
-        // Generate a random city around the runway
-        for (let i = 0; i < 150; i++) {
-            let width = 15 + Math.random() * 20;
-            let depth = 15 + Math.random() * 20;
-            let height = 40 + Math.random() * 150; // Skyscrapers
-
-            let x = (Math.random() - 0.5) * 2000;
-            let z = (Math.random() - 0.5) * 2000;
-
-            // Keep buildings off the runway
-            if (Math.abs(x) < 80 && z < 200 && z > -600) continue;
-
-            const bGeo = new THREE.BoxGeometry(width, height, depth);
-            const building = new THREE.Mesh(bGeo, buildingMaterial);
-            building.position.set(x, height / 2, z);
-            building.castShadow = true;
-            building.receiveShadow = true;
-            scene.add(building);
-            buildings.push(building);
+        // Roads
+        const roadMat = new THREE.MeshLambertMaterial({ color: 0x1e293b });
+        for(let i=0; i<5; i++) {
+            const road = new THREE.Mesh(new THREE.PlaneGeometry(30, 4000), roadMat);
+            road.rotation.x = -Math.PI / 2; road.position.set(-500 + (i*500), 0.2, 0);
+            scene.add(road);
         }
 
-        // 5. The Aircraft
+        // City Generator
+        const buildings = [];
+        for (let i = 0; i < 400; i++) {
+            let w = 20 + Math.random() * 30, d = 20 + Math.random() * 30, h = 50 + Math.random() * 250;
+            let x = (Math.random() - 0.5) * 4000, z = (Math.random() - 0.5) * 4000;
+            
+            // Keep clear of runways
+            if ((Math.abs(x) < 150 && z < 200 && z > -1000) || (Math.abs(x - 3000) < 600 && Math.abs(z + 2000) < 150)) continue;
+
+            const b = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), buildingMat);
+            b.position.set(x, h / 2, z);
+            b.castShadow = true; b.receiveShadow = true;
+            
+            // Fix texture stretching
+            buildingMat.map.repeat.set(w/50, h/50);
+            
+            scene.add(b);
+            buildings.push(b);
+        }
+
+        // --- 4. TRAFFIC SYSTEM ---
+        const cars = [];
+        const carGeo = new THREE.BoxGeometry(2, 2, 4);
+        const carMats = [new THREE.MeshLambertMaterial({color: 0xff0000}), new THREE.MeshLambertMaterial({color: 0x0000ff}), new THREE.MeshLambertMaterial({color: 0xffffff})];
+        
+        for(let i=0; i<50; i++) {
+            let roadIndex = Math.floor(Math.random() * 5);
+            let car = new THREE.Mesh(carGeo, carMats[Math.floor(Math.random() * carMats.length)]);
+            car.position.set(-500 + (roadIndex*500), 1, (Math.random() - 0.5) * 4000);
+            car.userData = { speed: 0.5 + Math.random(), dir: Math.random() > 0.5 ? 1 : -1 };
+            scene.add(car);
+            cars.push(car);
+        }
+
+        // --- 5. AIRCRAFT ---
         const plane = new THREE.Group();
-        
-        // Fuselage (Body)
-        const bodyGeo = new THREE.BoxGeometry(2, 2, 8);
-        const bodyMat = new THREE.MeshLambertMaterial({ color: 0xffffff });
-        const body = new THREE.Mesh(bodyGeo, bodyMat);
-        body.castShadow = true;
-        plane.add(body);
-
-        // Wings
-        const wingGeo = new THREE.BoxGeometry(16, 0.2, 3);
-        const wingMat = new THREE.MeshLambertMaterial({ color: 0xef4444 }); // Red wings
-        const wings = new THREE.Mesh(wingGeo, wingMat);
-        wings.position.set(0, 0, 0);
-        wings.castShadow = true;
-        plane.add(wings);
-
-        // Tail
-        const tailGeo = new THREE.BoxGeometry(5, 0.2, 2);
-        const tail = new THREE.Mesh(tailGeo, wingMat);
+        const body = new THREE.Mesh(new THREE.BoxGeometry(2, 2, 8), new THREE.MeshLambertMaterial({ color: 0xf8fafc }));
+        const wings = new THREE.Mesh(new THREE.BoxGeometry(20, 0.2, 3), new THREE.MeshLambertMaterial({ color: 0xef4444 }));
+        const tail = new THREE.Mesh(new THREE.BoxGeometry(6, 0.2, 2), new THREE.MeshLambertMaterial({ color: 0xef4444 }));
         tail.position.set(0, 0.5, 3.5);
-        plane.add(tail);
-        
-        const rudderGeo = new THREE.BoxGeometry(0.2, 3, 2);
-        const rudder = new THREE.Mesh(rudderGeo, wingMat);
-        rudder.position.set(0, 1.5, 3.5);
-        plane.add(rudder);
-
+        plane.add(body); plane.add(wings); plane.add(tail);
         scene.add(plane);
 
-        // 6. Flight Physics & State
+        // --- 6. ADVANCED PHYSICS STATE ---
         let speed = 0;
-        const maxSpeed = 3.0;
-        const minSpeed = -0.5; // Reverse taxiing
-        const acceleration = 0.02;
-        const turnSpeed = 0.02;
+        let verticalVelocity = 0; // NEW: Controls falling
+        const maxSpeed = 4.0;
+        const gravity = 0.05; 
+        const liftFactor = 0.015; // How much lift speed generates
+        const turnSpeed = 0.025;
 
         function resetFlight() {
-            plane.position.set(0, 2, 80); // Start at beginning of runway
+            plane.position.set(0, 2, 80);
             plane.rotation.set(0, 0, 0);
-            speed = 0;
+            speed = 0; verticalVelocity = 0;
         }
-        resetFlight(); // Initialize position
+        resetFlight();
 
-        // 7. Input Handling
+        // --- 7. INPUTS ---
         const keys = {};
-        window.addEventListener('keydown', e => { keys[e.code] = true; });
-        window.addEventListener('keyup', e => { keys[e.code] = false; });
+        window.addEventListener('keydown', e => keys[e.code] = true);
+        window.addEventListener('keyup', e => keys[e.code] = false);
 
-        window.addEventListener('resize', () => {
-            camera.aspect = window.innerWidth / window.innerHeight;
-            camera.updateProjectionMatrix();
-            renderer.setSize(window.innerWidth, window.innerHeight);
-        });
-
-        // 8. The Game Loop
+        // --- 8. MAIN LOOP ---
         const planeBox = new THREE.Box3();
         const buildingBox = new THREE.Box3();
 
         function animate() {
             requestAnimationFrame(animate);
 
-            // --- THROTTLE (Up/Down Arrows) ---
-            if (keys['ArrowUp']) speed += acceleration;
-            if (keys['ArrowDown']) speed -= acceleration;
+            // Throttle
+            if (keys['ArrowUp']) speed += 0.015;
+            if (keys['ArrowDown']) speed -= 0.02;
+            if (!keys['ArrowUp'] && !keys['ArrowDown']) speed *= 0.995; // Drag
+            speed = Math.max(0, Math.min(maxSpeed, speed));
+
+            // --- AERODYNAMICS (Lift & Gravity) ---
+            // Lift is based on speed. Rolling the plane decreases vertical lift (spills air).
+            let currentRoll = Math.abs(plane.rotation.z);
+            let lift = (speed * speed) * liftFactor * Math.cos(currentRoll); 
             
-            // Add air resistance/drag if no keys pressed
-            if (!keys['ArrowUp'] && !keys['ArrowDown']) speed *= 0.99; 
+            // Stall Warning
+            const stallWarning = document.getElementById('stallWarning');
+            if (plane.position.y > 10 && lift < gravity) stallWarning.style.display = 'block';
+            else stallWarning.style.display = 'none';
+
+            // Apply gravity and lift to vertical velocity
+            verticalVelocity += lift - gravity;
             
-            // Clamp speed limits
-            speed = Math.max(minSpeed, Math.min(maxSpeed, speed)); 
+            // Add pitch vector to vertical velocity (pointing nose up makes you go up if you have speed)
+            verticalVelocity -= Math.sin(plane.rotation.x) * speed * 0.1;
 
-            // Update UI
-            document.getElementById('speedometer').innerText = `Speed: ${Math.floor(speed * 100)} kts`;
+            // Apply vertical movement
+            plane.position.y += verticalVelocity;
 
-            // Only allow flying controls if moving fast enough, otherwise it's just taxiing
-            let controlEffectiveness = Math.min(1, Math.abs(speed) / 0.5); 
-
-            // --- FLIGHT CONTROLS ---
-            if (keys['KeyW']) plane.rotateX(turnSpeed * controlEffectiveness);  // Pitch Down
-            if (keys['KeyS']) plane.rotateX(-turnSpeed * controlEffectiveness); // Pitch Up
-            
-            if (keys['KeyQ']) plane.rotateZ(turnSpeed * controlEffectiveness);  // Roll Left
-            if (keys['KeyE']) plane.rotateZ(-turnSpeed * controlEffectiveness); // Roll Right
-            
-            if (keys['KeyA']) plane.rotateY(turnSpeed * controlEffectiveness);  // Yaw Left
-            if (keys['KeyD']) plane.rotateY(-turnSpeed * controlEffectiveness); // Yaw Right
-
-            // --- MOVEMENT ---
-            // Move forward along the plane's local Z axis (negative Z is forward in Three.js)
-            plane.translateZ(-speed); 
-
-            // --- 3RD PERSON CAMERA FOLLOW ---
-            // Calculate position behind and above the plane
-            const relativeCameraOffset = new THREE.Vector3(0, 8, 25);
-            const cameraOffset = relativeCameraOffset.applyMatrix4(plane.matrixWorld);
-            
-            // Smoothly interpolate camera position (Lerp) for cinematic feel
-            camera.position.lerp(cameraOffset, 0.1);
-            
-            // Camera always looks at a point slightly ahead of the plane
-            const lookTarget = new THREE.Vector3(0, 0, -20).applyMatrix4(plane.matrixWorld);
-            camera.lookAt(lookTarget);
-
-            // --- COLLISION DETECTION ---
-            planeBox.setFromObject(plane);
-
-            // Ground Collision
-            if (plane.position.y < 1) {
-                // If we hit the ground hard, we crash. If we are flat, we land/taxi.
-                let pitch = Math.abs(plane.rotation.x);
-                let roll = Math.abs(plane.rotation.z);
-                
-                if (pitch > 0.3 || roll > 0.3 || plane.position.y < 0) {
-                    resetFlight(); // Crash!
+            // Ground Interaction
+            if (plane.position.y <= 2) {
+                // Crash check (too fast vertically, or bad angle)
+                if (verticalVelocity < -1.5 || Math.abs(plane.rotation.x) > 0.4 || Math.abs(plane.rotation.z) > 0.4) {
+                    resetFlight();
                 } else {
-                    plane.position.y = 1; // Stay flat on ground
+                    plane.position.y = 2; // Taxiing
+                    verticalVelocity = 0;
                     plane.rotation.x = 0;
                     plane.rotation.z = 0;
                 }
             }
 
-            // Building Collision
-            for (let i = 0; i < buildings.length; i++) {
-                buildingBox.setFromObject(buildings[i]);
-                if (planeBox.intersectsBox(buildingBox)) {
-                    resetFlight(); // Crash into building!
-                }
+            // --- CONTROLS ---
+            let controlPower = Math.min(1, speed / 1.0); // Need speed to steer
+            if (plane.position.y > 2.5 || speed > 1) {
+                if (keys['KeyW']) plane.rotateX(turnSpeed * controlPower);  
+                if (keys['KeyS']) plane.rotateX(-turnSpeed * controlPower); 
+                if (keys['KeyQ']) plane.rotateZ(turnSpeed * controlPower);  
+                if (keys['KeyE']) plane.rotateZ(-turnSpeed * controlPower); 
             }
+            // Yaw (Rudder) works on ground too
+            if (keys['KeyA']) plane.rotateY(turnSpeed * (plane.position.y <= 2 ? 1 : controlPower));  
+            if (keys['KeyD']) plane.rotateY(-turnSpeed * (plane.position.y <= 2 ? 1 : controlPower)); 
+
+            // Forward movement
+            plane.translateZ(-speed);
+
+            // --- UPDATE TRAFFIC ---
+            cars.forEach(car => {
+                car.position.z += car.userData.speed * car.userData.dir;
+                if(car.position.z > 2000 || car.position.z < -2000) car.userData.dir *= -1; // Turn around
+            });
+
+            // --- COLLISIONS ---
+            planeBox.setFromObject(plane);
+            for (let b of buildings) {
+                buildingBox.setFromObject(b);
+                if (planeBox.intersectsBox(buildingBox)) resetFlight();
+            }
+
+            // --- CAMERA & HUD ---
+            const camOffset = new THREE.Vector3(0, 10, 30).applyMatrix4(plane.matrixWorld);
+            camera.position.lerp(camOffset, 0.1);
+            camera.lookAt(new THREE.Vector3(0, 0, -50).applyMatrix4(plane.matrixWorld));
+
+            document.getElementById('speedometer').innerText = `Speed: ${Math.floor(speed * 60)} kts`;
+            document.getElementById('altimeter').innerText = `Alt: ${Math.floor((plane.position.y - 2) * 10)} ft`;
 
             renderer.render(scene, camera);
         }
-
         animate();
     </script>
 </body>
